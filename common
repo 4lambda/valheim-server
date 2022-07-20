@@ -66,6 +66,10 @@ supervisor_syslog_conf=/usr/local/etc/supervisor/conf.d/syslog.conf
 # File containing the git commit shasum this image was build with
 git_commit_file=/usr/local/etc/git-commit.HEAD
 
+# Worlds directories
+old_worlds_dir="/config/worlds"
+worlds_dir="/config/worlds_local"
+
 # log levels
 debug=50
 info=40
@@ -118,9 +122,14 @@ ensure_permissions() {
     fi
     chmod "$CONFIG_DIRECTORY_PERMISSIONS" /config
     chmod -f "$CONFIG_FILE_PERMISSIONS" /config/*.txt
-    if [ -d /config/worlds ]; then
-        chmod "$WORLDS_DIRECTORY_PERMISSIONS" /config/worlds
-        chmod "$WORLDS_FILE_PERMISSIONS" /config/worlds/*
+    # Legacy worlds directory
+    if [ -d "$old_worlds_dir" ]; then
+        chmod "$WORLDS_DIRECTORY_PERMISSIONS" "$old_worlds_dir"
+        chmod "$WORLDS_FILE_PERMISSIONS" "${old_worlds_dir}/"*
+    fi
+    if [ -d "$worlds_dir" ]; then
+        chmod "$WORLDS_DIRECTORY_PERMISSIONS" "$worlds_dir"
+        chmod "$WORLDS_FILE_PERMISSIONS" "${worlds_dir}/"*
     fi
     if [ "$VALHEIM_PLUS" = true ] && [ -d /config/valheimplus ]; then
         find /config/valheimplus -type d -exec chmod "$VALHEIM_PLUS_CONFIG_DIRECTORY_PERMISSIONS" "{}" +
