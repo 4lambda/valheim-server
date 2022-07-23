@@ -1,123 +1,40 @@
-FROM debian:buster-slim as build-env
-ENV DEBIAN_FRONTEND=noninteractive
-ARG TESTS
-ARG SOURCE_COMMIT
-ARG BUSYBOX_VERSION=1.34.1
-ARG SUPERVISOR_VERSION=4.2.4
+FROM            ghcr.io/4lambda/python:3.8 as base
 
-RUN apt-get update
-RUN apt-get -y install apt-utils
-RUN apt-get -y install build-essential curl git python3 python3-pip golang shellcheck
-
-WORKDIR /build/busybox
-RUN curl -L -o /tmp/busybox.tar.bz2 https://busybox.net/downloads/busybox-${BUSYBOX_VERSION}.tar.bz2 \
-    && tar xjvf /tmp/busybox.tar.bz2 --strip-components=1 -C /build/busybox \
-    && make defconfig \
-    && sed -i -e "s/^CONFIG_FEATURE_SYSLOGD_READ_BUFFER_SIZE=.*/CONFIG_FEATURE_SYSLOGD_READ_BUFFER_SIZE=2048/" .config \
-    && make \
-    && cp busybox /usr/local/bin/
-
+RUN             yum install -y \
+                    bzip2-1.0.6-26.el8 \
+                    cronie-1.5.2-7.el8 \
+                    git-2.31.1-2.el8 \
+                    glibc-2.28-206.el8.i686 \
+                    libstdc++-8.5.0-13.el8.i686 \
+                    lsof-4.93.2-1.el8 \
+                    perl-IO-Compress-2.081-1.el8 \
+                    supervisor-4.2.2-1.el8 \
+                    vim-enhanced-2:8.0.1763-19.el8.4 \
+                && yum -q clean all \
+                
 WORKDIR /build/env2cfg
 COPY ./env2cfg/ /build/env2cfg/
-RUN if [ "${TESTS:-true}" = true ]; then \
-        pip3 install tox \
-        && tox \
-        ; \
-    fi
-RUN python3 setup.py bdist --format=gztar
+RUN python3.8 -m virtualenv --system-site-packages /env && \
+    source /env/bin/activate && \
+    python3 -m pip --no-cache-dir install . && \
+    python3 -m pip --no-cache-dir install python-a2s==1.3.0
 
 WORKDIR /build/valheim-logfilter
 COPY ./valheim-logfilter/ /build/valheim-logfilter/
 RUN go build -ldflags="-s -w" \
-    && mv valheim-logfilter /usr/local/bin/
+    && install -m 755 valheim-logfilter /usr/local/bin/
 
-WORKDIR /build
-RUN git clone https://github.com/Yepoleb/python-a2s.git \
-    && cd python-a2s \
-    && python3 setup.py bdist --format=gztar
-
-WORKDIR /build/supervisor
-RUN curl -L -o /tmp/supervisor.tar.gz https://github.com/Supervisor/supervisor/archive/${SUPERVISOR_VERSION}.tar.gz \
-    && tar xzvf /tmp/supervisor.tar.gz --strip-components=1 -C /build/supervisor \
-    && python3 setup.py bdist --format=gztar
-
-COPY bootstrap /usr/local/sbin/
-COPY valheim-status /usr/local/bin/
-COPY valheim-is-idle /usr/local/bin/
-COPY valheim-bootstrap /usr/local/bin/
-COPY valheim-backup /usr/local/bin/
-COPY valheim-updater /usr/local/bin/
-COPY valheim-plus-updater /usr/local/bin/
-COPY bepinex-updater /usr/local/bin/
-COPY valheim-server /usr/local/bin/
+COPY --chmod 755 scripts/ /usr/local/bin/
 COPY defaults /usr/local/etc/valheim/
 COPY common /usr/local/etc/valheim/
 COPY contrib/* /usr/local/share/valheim/contrib/
-RUN chmod 755 /usr/local/sbin/bootstrap /usr/local/bin/valheim-*
-RUN if [ "${TESTS:-true}" = true ]; then \
-        shellcheck -a -x -s bash -e SC2034 \
-            /usr/local/sbin/bootstrap \
-            /usr/local/bin/valheim-backup \
-            /usr/local/bin/valheim-is-idle \
-            /usr/local/bin/valheim-bootstrap \
-            /usr/local/bin/valheim-server \
-            /usr/local/bin/valheim-updater \
-            /usr/local/bin/valheim-plus-updater \
-            /usr/local/bin/bepinex-updater \
-            /usr/local/share/valheim/contrib/*.sh \
-        ; \
-    fi
-WORKDIR /
-RUN rm -rf /usr/local/lib/
-RUN tar xzvf /build/supervisor/dist/supervisor-*.linux-x86_64.tar.gz
-RUN tar xzvf /build/env2cfg/dist/env2cfg-*.linux-x86_64.tar.gz
-RUN tar xzvf /build/python-a2s/dist/python-a2s-*.linux-x86_64.tar.gz
-COPY supervisord.conf /usr/local/etc/supervisord.conf
-RUN mkdir -p /usr/local/etc/supervisor/conf.d/ \
-    && chmod 640 /usr/local/etc/supervisord.conf
-RUN echo "${SOURCE_COMMIT:-unknown}" > /usr/local/etc/git-commit.HEAD
+COPY supervisord.conf /etc/
 
-
-FROM debian:buster-slim
-ENV DEBIAN_FRONTEND=noninteractive
-COPY --from=build-env /usr/local/ /usr/local/
+FROM base AS app-base
 COPY fake-supervisord /usr/bin/supervisord
 
 RUN groupadd -g "${PGID:-0}" -o valheim \
     && useradd -g "${PGID:-0}" -u "${PUID:-0}" -o --create-home valheim \
-    && dpkg --add-architecture i386 \
-    && apt-get update \
-    && apt-get -y --no-install-recommends install apt-utils \
-    && apt-get -y dist-upgrade \
-    && apt-get -y --no-install-recommends install \
-        libc6-dev \
-        lib32stdc++6 \
-        lib32gcc1 \
-        libsdl2-2.0-0 \
-        libsdl2-2.0-0:i386 \
-        cron \
-        curl \
-        iproute2 \
-        libcurl4 \
-        libcurl4:i386 \
-        ca-certificates \
-        procps \
-        locales \
-        unzip \
-        zip \
-        rsync \
-        openssh-client \
-        jq \
-        python3-minimal \
-        python3-pkg-resources \
-        python3-setuptools \
-    && echo 'LANG="en_US.UTF-8"' > /etc/default/locale \
-    && echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen \
-    && rm -f /bin/sh \
-    && ln -s /bin/bash /bin/sh \
-    && locale-gen \
-    && update-alternatives --install /usr/bin/python python /usr/bin/python3 1 \
-    && apt-get clean \
     && mkdir -p /var/spool/cron/crontabs /var/log/supervisor /opt/valheim /opt/steamcmd /home/valheim/.config/unity3d/IronGate /config /var/run/valheim \
     && ln -s /config /home/valheim/.config/unity3d/IronGate/Valheim \
     && ln -s /usr/local/bin/busybox /usr/local/sbin/syslogd \
